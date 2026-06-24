@@ -1,0 +1,31 @@
+{
+  "name": "wedocs-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "@tiptap/react": "3.27.1",
+    "@tiptap/pm": "3.27.1",
+    "@tiptap/starter-kit": "3.27.1",
+    "@tiptap/extension-collaboration": "3.27.1",
+    "@tiptap/y-tiptap": "3.0.5",
+    "yjs": "13.6.31",
+    "y-websocket": "3.0.0",
+    "y-protocols": "1.0.7"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "6.0.3",
+    "typescript": "6.0.3",
+    "vite": "8.1.0"
+  }
+}
