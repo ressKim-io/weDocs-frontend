@@ -6,13 +6,18 @@ import * as Y from 'yjs'
 import { WebsocketProvider } from 'y-websocket'
 
 const WS_URL = import.meta.env.VITE_WS_URL ?? 'ws://localhost:8080/ws/doc'
-const ROOM = 'demo'
+
+// room = 문서 ID. ?room=<id> 로 다중 문서를 열 수 있다(미지정 시 demo).
+function roomFromUrl(): string {
+  return new URLSearchParams(window.location.search).get('room') ?? 'demo'
+}
 
 /// Tiptap + Yjs 협업 에디터. 표준 y-websocket provider 로 ws-gateway 에 접속한다.
 export default function Editor() {
+  const room = useMemo(roomFromUrl, [])
   // Y.Doc 과 provider 는 컴포넌트 수명 동안 1회 생성.
   const ydoc = useMemo(() => new Y.Doc(), [])
-  const provider = useMemo(() => new WebsocketProvider(WS_URL, ROOM, ydoc), [ydoc])
+  const provider = useMemo(() => new WebsocketProvider(WS_URL, room, ydoc), [room, ydoc])
 
   useEffect(() => {
     return () => {
@@ -32,7 +37,7 @@ export default function Editor() {
   return (
     <section className="editor">
       <p className="hint">
-        gateway: <code>{WS_URL}/{ROOM}</code> — 두 탭에서 열어 동시 편집해 보세요.
+        gateway: <code>{WS_URL}/{room}</code> — 두 탭에서 열어 동시 편집해 보세요.
       </p>
       <EditorContent editor={editor} />
     </section>
