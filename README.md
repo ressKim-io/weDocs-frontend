@@ -25,6 +25,14 @@ room 은 `?room=<id>` 쿼리로 지정한다(미지정 시 `demo`) — 탭마다
 1. `crdt-engine` 실행(50051) → `ws-gateway` 실행(8080) → `npm run dev`
 2. 두 브라우저 탭에서 같은 room 접속 → 한쪽 편집이 다른쪽에 수렴.
 
+## 테스트 구분
+| 명령 | 대상 | 사전 조건 |
+|---|---|---|
+| `npm run test:unit` | 단위(`test/*.test.ts`) — room sanitize·WS URL 승격 | 없음 (CI가 이걸 돌린다) |
+| `npm run test:e2e` | 수렴 E2E(`test/e2e/`) | **engine + gateway 실기동** (아래) |
+
+E2E는 다른 레포 서비스 2개를 띄워야 해서 CI에서 제외돼 있다(M5 배포 파이프라인과 함께 재판정).
+
 ## E2E 수렴 테스트
 브라우저 없이 두 `y-websocket` 클라이언트(Node + `ws` 폴리필)로 "동시 편집 수렴"을 자동 검증한다.
 경로 = `y-websocket → ws-gateway(8080) → crdt-engine(50051) → fan-out`. `disableBc: true` 로
