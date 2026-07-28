@@ -1,0 +1,36 @@
+name: ci
+
+# 빌드·테스트 게이트. 이전까지 이 레포엔 security-scan만 있어 tsc/vitest가 CI에서
+# 한 번도 돌지 않았다 — 빌드를 깨는 PR도 all-green으로 보였다
+# (controller docs/plans/2026-07-28-build-test-ci-gap.md).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # v7(2026-07-14 릴리스, ESM 마이그레이션)은 아직 2주밖에 안 돼 베이스라인은 v6로 세운다.
+      # node 24 = 설치된 툴체인 engines의 교집합을 만족하는 LTS —
+      # vite 8.1.0 `^20.19.0 || >=22.12.0` ∩ vitest 4.1.9 `^20.0.0 || ^22.0.0 || >=24.0.0`.
+      # (레포에 .nvmrc/engines 핀이 없어 여기서 명시한다.)
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+
+      - run: npm ci
+
+      # `build`는 `tsc --noEmit && vite build`라 타입체크를 포함한다 — typecheck 별도 실행은 중복.
+      - run: npm run build
+
+      # E2E(test/e2e)는 제외한다 — engine + ws-gateway를 실기동해야 하는 크로스 레포
+      # 통합 테스트라 이 워크플로 범위 밖이다(M5 배포 파이프라인과 함께 재판정).
+      - run: npm run test:unit

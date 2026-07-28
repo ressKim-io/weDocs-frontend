@@ -8,8 +8,9 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test:e2e": "vitest run",
-    "test:e2e:watch": "vitest"
+    "test:unit": "vitest run --exclude 'test/e2e/**'",
+    "test:e2e": "vitest run test/e2e",
+    "test:e2e:watch": "vitest test/e2e"
   },
   "dependencies": {
     "@tiptap/extension-collaboration": "3.27.1",
