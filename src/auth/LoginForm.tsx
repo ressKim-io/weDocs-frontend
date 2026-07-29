@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
-import { ApiError, NETWORK_ERROR_STATUS } from '../common/http/client'
+import { ApiError } from '../common/http/client'
+import { describeApiFailure } from '../common/http/failure'
 import { signIn, signUpAndSignIn } from './session'
 
 /// 서버 `SignupRequest` 의 `@Size(min = 8)` 과 정합. 클라 검증은 왕복을 줄이기 위한 것이지
@@ -110,25 +111,24 @@ export default function LoginForm({ onAuthenticated }: LoginFormProps) {
 }
 
 /// 서버 문구를 그대로 노출하지 않고 `code`/`status` 로만 분기한다 — `detail` 파싱 금지 계약을
-/// UI 에서도 지킨다(`api/client.ts` 참조). 분류되지 않은 실패는 뭉뚱그려 내부 상세를 흘리지 않는다.
+/// UI 에서도 지킨다(`common/http/client.ts` 참조).
+///
+/// **이 화면에만 있는 실패를 먼저 처리하고 나머지는 공통 문구에 위임한다** — 네트워크 미도달 같은
+/// 실패를 화면마다 다르게 설명하면 같은 원인이 다른 문제처럼 보인다.
 function describeFailure(cause: unknown): string {
-  if (!(cause instanceof ApiError)) {
-    return '알 수 없는 오류가 발생했습니다.'
+  if (cause instanceof ApiError) {
+    switch (cause.code) {
+      case 'invalid-credentials':
+        return '이메일 또는 비밀번호가 올바르지 않습니다.'
+      case 'email-already-used':
+        return '이미 가입된 이메일입니다.'
+      default:
+        break
+    }
+    // Bean validation 400 에는 `code` 가 없다 — 상태 코드로 받는다.
+    if (cause.status === 400) {
+      return `입력값을 확인해 주세요. (비밀번호는 ${MIN_PASSWORD_LENGTH}자 이상)`
+    }
   }
-  if (cause.status === NETWORK_ERROR_STATUS) {
-    return '서버에 연결할 수 없습니다. doc-service(:8081)가 실행 중인지 확인하세요.'
-  }
-  switch (cause.code) {
-    case 'invalid-credentials':
-      return '이메일 또는 비밀번호가 올바르지 않습니다.'
-    case 'email-already-used':
-      return '이미 가입된 이메일입니다.'
-    default:
-      break
-  }
-  // Bean validation 400 에는 `code` 가 없다 — 상태 코드로 받는다.
-  if (cause.status === 400) {
-    return `입력값을 확인해 주세요. (비밀번호는 ${MIN_PASSWORD_LENGTH}자 이상)`
-  }
-  return '요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.'
+  return describeApiFailure(cause)
 }
