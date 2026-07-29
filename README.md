@@ -3,9 +3,10 @@
 weDocs 협업 에디터 프론트엔드 — **React 19 + Tiptap 3 + Yjs**.
 표준 `y-websocket` provider로 **ws-gateway**에 접속한다(gRPC 비소비자 — proto 의존 없음).
 
-> 상태: **M2 Phase 2c 진행 중**. M1(수렴)에 더해 **인증 셸**(로그인 → 메모리 토큰 → 화면 게이팅)이 붙었다.
-> ⚠️ **에디터 경로는 아직 복구 전이다** — 기본 room 이 비UUID `demo` 라 게이트웨이가 403 으로 거절한다.
-> 페이지 선택(실제 UUID)과 토큰 전달은 **C3** 에서 붙는다. 로그인까지가 이번 단계의 완료 지점이다.
+> 상태: **M2 Phase 2c 진행 중**. 로그인 → 워크스페이스/페이지 선택 → 편집까지 이어진다.
+> **room = 페이지 UUID** 이고, 토큰은 WS 서브프로토콜 `[wedocs.sync.v1, <jwt>]` 로 전달된다.
+> viewer 로 공유받은 페이지는 **편집이 잠긴다**(서버가 준 `canEdit` 기준).
+> 남은 것은 E2E 재작성(C3-5·6)뿐이다.
 
 ## 스택 (verified 2026-06-25 / 테스트 도구 2026-07-29)
 - React 19.2 · Vite 8.1 · TypeScript 6.0
@@ -21,16 +22,26 @@ npm run dev               # http://localhost:5173
 npm run build             # tsc --noEmit + vite build
 ```
 
-**로그인에는 doc-service(:8081)가 필요하다** — 미기동이면 폼이 "서버에 연결할 수 없습니다"로 실패한다.
+**로그인·페이지 목록에는 doc-service(:8081)가 필요하고, 편집에는 gateway(:8080) + engine(:50051)이 더 필요하다.**
+미기동이면 화면이 "서버에 연결할 수 없습니다"로 실패한다.
 
 ```sh
-# 사전 조건 2프로세스 (별도 레포)
+# 사전 조건 (별도 레포)
 docker run --rm -e POSTGRES_DB=wedocs -e POSTGRES_USER=wedocs -e POSTGRES_PASSWORD=wedocs \
   -p 5432:5432 postgres:16-alpine
-cd ../weDocs-backend && make run-doc     # :8081 REST (+ :50052 gRPC)
+cd ../weDocs-backend     && make run-doc   # :8081 REST (+ :50052 gRPC)
+cd ../weDocs-backend     && make run       # :8080 gateway   — 편집에 필요
+cd ../weDocs-crdt-engine && cargo run      # :50051 engine   — 편집에 필요
 ```
 
-room 은 `?room=<id>` 쿼리로 지정한다(미지정 시 `demo`) — 탭마다 다른 문서를 열 수 있다.
+### room = 페이지 UUID
+페이지를 열면 주소가 `?room=<page-uuid>` 로 갱신된다 — **그 URL을 다른 탭에 붙여 넣으면 같은 문서**다
+(두 탭 동시 편집 데모의 경로). UUID가 아닌 room 은 연결을 시도조차 하지 않고 선택 화면으로 돌아간다:
+게이트웨이 인가가 비UUID doc_id 를 무조건 403 으로 끊는데, **브라우저는 WS 실패에서 그 상태 코드를
+볼 수 없어**(code 1006 뿐) 원인 없는 무한 재접속으로만 보이기 때문이다.
+
+> 토큰은 메모리 전용이라 **탭마다 로그인이 필요하다**(아래 §토큰을 저장하지 않는 이유). 두 번째 탭은
+> 로그인 후 같은 페이지를 목록에서 고르거나 `?room=` URL 로 바로 열면 된다.
 
 ### 토큰을 저장하지 않는 이유
 액세스 토큰은 **메모리에만** 둔다(`src/auth/token.ts`). localStorage/sessionStorage 에 넣으면
