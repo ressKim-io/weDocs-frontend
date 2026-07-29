@@ -20,6 +20,60 @@ body {
   margin-top: -0.5rem;
 }
 
+.auth form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-width: 320px;
+}
+
+.auth input {
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font: inherit;
+}
+
+.auth button {
+  margin-top: 0.75rem;
+  padding: 0.55rem;
+  font: inherit;
+  border: 0;
+  border-radius: 6px;
+  background: #1a1a1a;
+  color: #fff;
+  cursor: pointer;
+}
+
+.auth button:disabled {
+  background: #999;
+  cursor: progress;
+}
+
+.auth .auth-switch {
+  margin-top: 0.5rem;
+  padding: 0;
+  background: none;
+  color: #555;
+  text-decoration: underline;
+}
+
+.auth-error {
+  margin: 0.5rem 0 0;
+  color: #b00020;
+  font-size: 0.9rem;
+}
+
+.sign-out {
+  float: right;
+  font: inherit;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
 .editor .hint {
   font-size: 0.85rem;
   color: #888;
