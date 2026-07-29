@@ -56,32 +56,50 @@ editor/viewer 를 두 탭에 나눠 여는 데모 시나리오와 오히려 맞�
 ## 테스트 구분
 | 명령 | 대상 | 사전 조건 |
 |---|---|---|
-| `npm run test:unit` | 단위·컴포넌트(`test/**`, e2e 제외) — room sanitize·WS URL 승격·토큰 만료·REST 에러 변환·로그인 폼 | 없음 (CI가 이걸 돌린다) |
-| `npm run test:e2e` | 수렴 E2E(`test/e2e/`) | **engine + gateway 실기동** (아래) |
+| `npm run test:unit` | 단위·컴포넌트(`test/**`, e2e 제외) — room 파싱·WS URL 승격·토큰 만료·REST 계약 검증·화면 3종 | 없음 (CI가 이걸 돌린다) |
+| `npm run test:e2e` | 인증된 협업 E2E(`test/e2e/`) | **4프로세스 실기동** (아래) |
 
-E2E는 다른 레포 서비스 2개를 띄워야 해서 CI에서 제외돼 있다(M5 배포 파이프라인과 함께 재판정).
+E2E는 다른 레포 서비스를 띄워야 해서 CI에서 제외돼 있다(M5 배포 파이프라인과 함께 재판정).
 
 **테스트 환경 분기** — 전역 기본은 `node`(E2E가 실제 WS 를 열어야 하므로). 컴포넌트 테스트만
 파일 상단 `// @vitest-environment jsdom` docblock 으로 뒤집는다. vitest 4 에서 `environmentMatchGlobs`가
 제거돼 glob 기반 분기는 쓸 수 없다. RTL 자동 cleanup 도 `globals:false` 에선 등록되지 않으므로
 컴포넌트 테스트는 **명시적 `afterEach(cleanup)`** 을 둔다.
 
-## E2E 수렴 테스트
-브라우저 없이 두 `y-websocket` 클라이언트(Node + `ws` 폴리필)로 "동시 편집 수렴"을 자동 검증한다.
+## E2E — 인증된 협업 테스트
+브라우저 없이 `y-websocket` 클라이언트(Node + `ws` 폴리필)로 **권한별 협업 동작**을 자동 검증한다.
 경로 = `y-websocket → ws-gateway(8080) → crdt-engine(50051) → fan-out`. `disableBc: true` 로
 BroadcastChannel 우회를 막아 **반드시 게이트웨이 경로만** 통과시킨다.
 
+| # | 케이스 | 확인하는 것 |
+|---|---|---|
+| ① | editor 2클라 동시 편집 | 텍스트 동등성 수렴 |
+| ② | viewer 공유 | 읽기는 수신, **쓰기는 미반영**(게이트웨이 drop) |
+| ③ | 무토큰 / SENTINEL 누락 / 비UUID room | 각각 401 · 401 · 403 |
+
+**사전 조건이 M1의 2프로세스에서 4프로세스로 늘었다** — 연결에 토큰(→ doc-service)과 실제 페이지
+UUID(→ postgres)가 필요해졌기 때문이다.
+
 ```sh
-# 1. 사전 조건: engine + gateway 기동 (별도 레포)
-#    crdt-engine:  cargo run                      # → 0.0.0.0:50051
-#    ws-gateway :  make run  (또는 bootJar 실행)   # → :8080
+# 1. 사전 조건 4프로세스
+docker run --rm -e POSTGRES_DB=wedocs -e POSTGRES_USER=wedocs -e POSTGRES_PASSWORD=wedocs \
+  -p 5432:5432 postgres:16-alpine
+cd ../weDocs-backend     && make run-doc   # :8081 REST (+ :50052 gRPC)
+cd ../weDocs-backend     && make run       # :8080 gateway
+cd ../weDocs-crdt-engine && cargo run      # :50051 engine
+
 # 2. E2E 실행
-npm run test:e2e          # vitest run — 2클라 동시 편집 → 텍스트 동등성 폴링 수렴 assert
+npm run test:e2e
 ```
 
-엔드포인트는 `E2E_WS_URL`(기본 `ws://localhost:8080/ws/doc`)로 덮어쓸 수 있다.
-서비스 미기동 시 연결 타임아웃(10s)으로 명확히 실패한다. 'synced' 이벤트에 의존하지 않고
-텍스트 동등성으로 검증한다(게이트웨이가 모든 update 를 WS `Update(2)` 로 프레이밍하기 때문).
+**테스트가 자기 사전조건을 스스로 만든다** — 실행마다 고유 이메일로 계정 2개(owner/viewer)를 가입시키고
+워크스페이스·페이지를 생성한 뒤 그 UUID 로 접속한다(`test/e2e/support/rest.ts`). 토큰을 사람이 주입하는
+방식을 쓰지 않은 이유는 그 방식으로는 **viewer 케이스를 재현할 수 없기** 때문이다.
+
+엔드포인트는 `E2E_WS_URL`(기본 `ws://localhost:8080/ws/doc`) · `E2E_API_URL`(기본 `http://localhost:8081`)로
+덮어쓸 수 있다(셸 환경변수 — `.env` 가 아니다). 서비스 미기동 시 부트스트랩이 즉시, 연결은 10s 타임아웃으로
+명확히 실패한다. 'synced' 이벤트에 의존하지 않고 텍스트 동등성으로 검증한다(게이트웨이가 모든 update 를
+WS `Update(2)` 로 프레이밍하기 때문).
 
 ## 설계 메모
 - **Hocuspocus/TiptapCloud 미사용** — 자체 `ws-gateway`가 y-protocols 서버를 구현, Rust 엔진이 yrs 머지.
