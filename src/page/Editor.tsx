@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Collaboration from '@tiptap/extension-collaboration'
@@ -21,6 +21,18 @@ interface EditorProps {
 }
 
 /// Tiptap + Yjs 협업 에디터. room = **페이지 UUID**, 편집 가능 여부는 서버가 준 `canEdit` 이 정한다.
+///
+/// ## Provider lifecycle (StrictMode 안전)
+///
+/// React 18 StrictMode는 개발 모드에서 mount→unmount→remount를 수행한다. 이전 구현은
+/// `useMemo` 안에서 `new WebsocketProvider(...)`를 생성했는데:
+/// - 첫 mount: provider 생성 → WS 연결 시작
+/// - StrictMode unmount: cleanup → `provider.destroy()` → WS가 수립 전 닫힘
+/// - remount: **파괴된 provider의 memo 캐시**가 남아 있어 새 provider를 만들지 않음
+/// → "closed before established" 반복 재연결
+///
+/// 해법: provider 생성을 `useEffect` 안에서 수행한다. cleanup이 호출되면 해당 인스턴스만
+/// 파괴되고, remount 시 새 인스턴스가 생긴다. ydoc도 마찬가지로 effect에서 관리한다.
 export default function Editor({ page }: EditorProps) {
   // 마운트 시점의 **사용 가능한** 토큰(만료면 null). 왜 만료를 미리 보는가: 만료 토큰으로 붙으면
   // 게이트웨이는 401 로 거절하지만 브라우저는 그 상태 코드를 볼 수 없어(WS 실패는 code 1006 뿐)
@@ -28,34 +40,44 @@ export default function Editor({ page }: EditorProps) {
   const token = useMemo(() => getToken(), [])
   // 보안 페이지(https)에선 wss:// 강제 — 평문 WS의 mixed-content 차단 방어.
   const wsUrl = useMemo(() => resolveWsUrl(CONFIGURED_WS_URL, window.location.protocol), [])
-  // Y.Doc 과 provider 는 컴포넌트 수명 동안 1회 생성.
-  const ydoc = useMemo(() => new Y.Doc(), [])
-  const provider = useMemo(
-    () =>
-      token === null
-        ? null
-        : new WebsocketProvider(wsUrl, page.id, ydoc, { protocols: [AUTH_SUBPROTOCOL, token] }),
-    [token, wsUrl, page.id, ydoc],
-  )
+
+  // --- Y.Doc + WebsocketProvider lifecycle (effect 기반) ---
+  const [ydoc, setYdoc] = useState<Y.Doc | null>(null)
+  const providerRef = useRef<WebsocketProvider | null>(null)
 
   useEffect(() => {
-    return () => {
-      provider?.destroy()
-      ydoc.destroy()
-    }
-  }, [provider, ydoc])
+    if (token === null) return
 
-  const editor = useEditor({
-    // viewer 는 **타이핑 자체가 잠긴다.** 잠그지 않으면 입력이 로컬 Y.Doc 에만 반영되고 게이트웨이는
-    // 조용히 drop 해(`ws_write_dropped_total{reason=viewer}`) 새로고침 시 유실된다 — UX 가 아니라
-    // 정합성 문제다. 판단은 `myRole` 이 아니라 `canEdit`(서버 정책의 단일 출처)으로 한다.
-    editable: page.canEdit,
-    extensions: [
-      // Collaboration 이 자체 undo/redo 를 제공 → StarterKit 의 undoRedo 비활성(중복 방지).
-      StarterKit.configure({ undoRedo: false }),
-      Collaboration.configure({ document: ydoc }),
-    ],
-  })
+    const doc = new Y.Doc()
+    const provider = new WebsocketProvider(wsUrl, page.id, doc, {
+      protocols: [AUTH_SUBPROTOCOL, token],
+    })
+
+    providerRef.current = provider
+    setYdoc(doc)
+
+    return () => {
+      provider.destroy()
+      doc.destroy()
+      providerRef.current = null
+      setYdoc(null)
+    }
+  }, [token, wsUrl, page.id])
+
+  const editor = useEditor(
+    {
+      // viewer 는 **타이핑 자체가 잠긴다.** 잠그지 않으면 입력이 로컬 Y.Doc 에만 반영되고 게이트웨이는
+      // 조용히 drop 해(`ws_write_dropped_total{reason=viewer}`) 새로고침 시 유실된다 — UX 가 아니라
+      // 정합성 문제다. 판단은 `myRole` 이 아니라 `canEdit`(서버 정책의 단일 출처)으로 한다.
+      editable: page.canEdit,
+      extensions: [
+        // Collaboration 이 자체 undo/redo 를 제공 → StarterKit 의 undoRedo 비활성(중복 방지).
+        StarterKit.configure({ undoRedo: false }),
+        ...(ydoc ? [Collaboration.configure({ document: ydoc })] : []),
+      ],
+    },
+    [ydoc],
+  )
 
   if (token === null) {
     return (
@@ -63,6 +85,10 @@ export default function Editor({ page }: EditorProps) {
         세션이 만료되었습니다. 로그아웃 후 다시 로그인해 주세요.
       </p>
     )
+  }
+
+  if (!ydoc) {
+    return <p className="picker-hint">연결 중…</p>
   }
 
   return (
