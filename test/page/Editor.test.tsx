@@ -3,7 +3,7 @@
 // 전역 환경은 node 다(E2E 가 의존) — 컴포넌트 테스트만 위 docblock 으로 뒤집는다.
 import '@testing-library/jest-dom/vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import Editor from '../../src/page/Editor'
 import type { PageDetailResponse } from '../../src/page/api'
 import { clearToken, setToken } from '../../src/auth/token'
@@ -44,12 +44,14 @@ afterEach(() => {
 })
 
 describe('Editor — 토큰 전달', () => {
-  it('게이트웨이 규약대로 [SENTINEL, jwt] 를 서브프로토콜로 싣는다', () => {
+  it('게이트웨이 규약대로 [SENTINEL, jwt] 를 서브프로토콜로 싣는다', async () => {
     // Given: 유효 토큰
     setToken('jwt-abc', 3600)
 
-    // When
-    render(<Editor page={pageWith()} />)
+    // When — provider 생성은 useEffect 안이라 act()로 flush 해야 한다
+    await act(async () => {
+      render(<Editor page={pageWith()} />)
+    })
 
     // Then: 서버 AuthSubprotocol 은 토큰이 정확히 1개가 아니면 fail-closed 로 거절한다
     expect(providerCalls).toHaveLength(1)
@@ -84,12 +86,14 @@ describe('Editor — 토큰 전달', () => {
 })
 
 describe('Editor — viewer 잠금', () => {
-  it('canEdit=false 면 읽기 전용 배지를 보여준다', () => {
+  it('canEdit=false 면 읽기 전용 배지를 보여준다', async () => {
     // Given: viewer 로 공유받은 페이지
     setToken('jwt-abc', 3600)
 
     // When
-    render(<Editor page={pageWith({ myRole: 'VIEWER', canEdit: false })} />)
+    await act(async () => {
+      render(<Editor page={pageWith({ myRole: 'VIEWER', canEdit: false })} />)
+    })
 
     // Then: 왜 타이핑이 안 되는지 모르는 상태를 만들지 않는다. 역할은 표시용으로만 쓴다
     const badge = screen.getByRole('status')
@@ -97,21 +101,25 @@ describe('Editor — viewer 잠금', () => {
     expect(badge).toHaveTextContent('VIEWER')
   })
 
-  it('canEdit=true 면 배지가 없다', () => {
+  it('canEdit=true 면 배지가 없다', async () => {
     // Given/When
     setToken('jwt-abc', 3600)
-    render(<Editor page={pageWith()} />)
+    await act(async () => {
+      render(<Editor page={pageWith()} />)
+    })
 
     // Then
     expect(screen.queryByRole('status')).toBeNull()
   })
 
-  it('역할이 EDITOR 라도 canEdit=false 면 잠근다 — 판단은 canEdit 단일 출처다', () => {
+  it('역할이 EDITOR 라도 canEdit=false 면 잠근다 — 판단은 canEdit 단일 출처다', async () => {
     // Given: 역할만 보면 편집 가능해 보이는 응답
     setToken('jwt-abc', 3600)
 
     // When
-    render(<Editor page={pageWith({ myRole: 'EDITOR', canEdit: false })} />)
+    await act(async () => {
+      render(<Editor page={pageWith({ myRole: 'EDITOR', canEdit: false })} />)
+    })
 
     // Then: "editor 면 편집 가능"을 클라가 재구현하면 서버 정책과 갈라진다
     expect(screen.getByRole('status')).toHaveTextContent('읽기 전용')
