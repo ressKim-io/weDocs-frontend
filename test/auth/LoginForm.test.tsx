@@ -30,6 +30,11 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 const TOKEN_BODY = { accessToken: 'jwt-new', tokenType: 'Bearer', expiresInSeconds: 3600 }
+const USER_BODY = {
+  id: '11111111-1111-4111-8111-111111111111',
+  email: 'user@example.com',
+  displayName: '테스터',
+}
 
 function fill(label: string, value: string) {
   fireEvent.change(screen.getByLabelText(label), { target: { value } })
@@ -44,7 +49,7 @@ function submitForm(container: HTMLElement) {
 describe('LoginForm', () => {
   it('로그인 폼을 렌더한다', () => {
     // Given/When
-    render(<LoginForm onAuthenticated={() => {}} />)
+    render(<LoginForm onAuthenticated={() => { }} />)
 
     // Then
     expect(screen.getByLabelText('이메일')).toBeInTheDocument()
@@ -56,7 +61,9 @@ describe('LoginForm', () => {
 
   it('로그인 성공하면 토큰을 저장하고 onAuthenticated 를 부른다', async () => {
     // Given
-    fetchMock.mockResolvedValue(jsonResponse(200, TOKEN_BODY))
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(200, TOKEN_BODY))
+      .mockResolvedValueOnce(jsonResponse(200, USER_BODY))
     const onAuthenticated = vi.fn()
     const { container } = render(<LoginForm onAuthenticated={onAuthenticated} />)
 
@@ -97,7 +104,7 @@ describe('LoginForm', () => {
   it('서버 미기동(네트워크 실패)은 자격증명 실패와 다른 문구로 안내한다', async () => {
     // Given: fetch 자체가 실패
     fetchMock.mockRejectedValue(new TypeError('fetch failed'))
-    const { container } = render(<LoginForm onAuthenticated={() => {}} />)
+    const { container } = render(<LoginForm onAuthenticated={() => { }} />)
 
     // When
     fill('이메일', 'user@example.com')
@@ -115,6 +122,9 @@ describe('LoginForm', () => {
         jsonResponse(201, { id: 'u1', email: 'new@example.com', displayName: '테스터' }),
       )
       .mockResolvedValueOnce(jsonResponse(200, TOKEN_BODY))
+      .mockResolvedValueOnce(
+        jsonResponse(200, { ...USER_BODY, email: 'new@example.com' }),
+      )
     const onAuthenticated = vi.fn()
     const { container } = render(<LoginForm onAuthenticated={onAuthenticated} />)
 
@@ -125,17 +135,17 @@ describe('LoginForm', () => {
     fill('표시 이름', '테스터')
     submitForm(container)
 
-    // Then: 두 요청이 순서대로 나가고, 토큰은 두 번째 응답에서 온다
+    // Then: 가입 → 토큰 발급 → 인증 사용자 조회 순서이며, 세 단계가 끝나야 세션이 완성된다
     await vi.waitFor(() => expect(onAuthenticated).toHaveBeenCalledTimes(1))
     const paths = fetchMock.mock.calls.map(([url]) => new URL(url as string).pathname)
-    expect(paths).toEqual(['/api/auth/signup', '/api/auth/login'])
+    expect(paths).toEqual(['/api/auth/signup', '/api/auth/login', '/api/users/me'])
     expect(getToken()).toBe('jwt-new')
   })
 
   it('모드를 전환하면 이전 실패 문구를 지운다', async () => {
     // Given: 로그인 실패로 문구가 떠 있는 상태
     fetchMock.mockRejectedValue(new TypeError('fetch failed'))
-    const { container } = render(<LoginForm onAuthenticated={() => {}} />)
+    const { container } = render(<LoginForm onAuthenticated={() => { }} />)
     fill('이메일', 'user@example.com')
     fill('비밀번호', 'password123')
     submitForm(container)
