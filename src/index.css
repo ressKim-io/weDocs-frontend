@@ -178,3 +178,32 @@ body {
   background: #fff;
   outline: none;
 }
+
+/* 원격 caret 라벨은 선택 영역 위에 떠야 하며 편집·선택 이벤트를 가로채면 안 된다. */
+.editor .collaboration-carets__caret {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 2px solid;
+  pointer-events: none;
+  word-break: normal;
+}
+
+.editor .collaboration-carets__label {
+  position: absolute;
+  left: -2px;
+  top: -1.45rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px 4px 4px 0;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.35;
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.editor .collaboration-carets__selection {
+  border-radius: 2px;
+}

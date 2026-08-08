@@ -4,24 +4,42 @@
 import '@testing-library/jest-dom/vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import type { Doc } from 'yjs'
 import Editor from '../../src/page/Editor'
 import type { PageDetailResponse } from '../../src/page/api'
-import { clearToken, setToken } from '../../src/auth/token'
+import { clearToken, setAuthenticatedUser, setToken } from '../../src/auth/token'
 
 /// provider 생성 인자를 기록만 하는 대역. 실제 WS 를 열지 않으므로 게이트웨이 없이도 **배선**을 검증한다.
 /// `vi.hoisted` 인 이유: `vi.mock` 은 import 위로 끌어올려져 일반 const 를 참조하면 TDZ 로 죽는다.
 const { providerCalls } = vi.hoisted(() => ({ providerCalls: [] as unknown[][] }))
 
-vi.mock('y-websocket', () => ({
-  WebsocketProvider: class {
-    constructor(...args: unknown[]) {
-      providerCalls.push(args)
-    }
-    destroy() {}
-  },
-}))
+vi.mock('y-websocket', async () => {
+  const { Awareness } = await import('y-protocols/awareness')
+  return {
+    WebsocketProvider: class {
+      readonly awareness: InstanceType<typeof Awareness>
+
+      constructor(...args: unknown[]) {
+        providerCalls.push(args)
+        this.awareness = new Awareness(args[2] as Doc)
+      }
+
+      destroy() {
+        this.awareness.destroy()
+      }
+    },
+  }
+})
 
 const PAGE_ID = '33333333-3333-4333-8333-333333333333'
+
+function authenticate(): void {
+  setToken('jwt-abc', 3600)
+  setAuthenticatedUser({
+    id: '22222222-2222-4222-8222-222222222222',
+    displayName: '협업 사용자',
+  })
+}
 
 function pageWith(overrides: Partial<PageDetailResponse> = {}): PageDetailResponse {
   return {
@@ -46,7 +64,7 @@ afterEach(() => {
 describe('Editor — 토큰 전달', () => {
   it('게이트웨이 규약대로 [SENTINEL, jwt] 를 서브프로토콜로 싣는다', async () => {
     // Given: 유효 토큰
-    setToken('jwt-abc', 3600)
+    authenticate()
 
     // When — provider 생성은 useEffect 안이라 act()로 flush 해야 한다
     await act(async () => {
@@ -88,7 +106,7 @@ describe('Editor — 토큰 전달', () => {
 describe('Editor — viewer 잠금', () => {
   it('canEdit=false 면 읽기 전용 배지를 보여준다', async () => {
     // Given: viewer 로 공유받은 페이지
-    setToken('jwt-abc', 3600)
+    authenticate()
 
     // When
     await act(async () => {
@@ -103,7 +121,7 @@ describe('Editor — viewer 잠금', () => {
 
   it('canEdit=true 면 배지가 없다', async () => {
     // Given/When
-    setToken('jwt-abc', 3600)
+    authenticate()
     await act(async () => {
       render(<Editor page={pageWith()} />)
     })
@@ -114,7 +132,7 @@ describe('Editor — viewer 잠금', () => {
 
   it('역할이 EDITOR 라도 canEdit=false 면 잠근다 — 판단은 canEdit 단일 출처다', async () => {
     // Given: 역할만 보면 편집 가능해 보이는 응답
-    setToken('jwt-abc', 3600)
+    authenticate()
 
     // When
     await act(async () => {

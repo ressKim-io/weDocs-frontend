@@ -2,15 +2,27 @@
 import '@testing-library/jest-dom/vitest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
+import type { Doc } from 'yjs'
 import PageEditor from '../../src/page/PageEditor'
-import { clearToken, setToken } from '../../src/auth/token'
+import { clearToken, setAuthenticatedUser, setToken } from '../../src/auth/token'
 
 /// 실제 WS 는 열지 않는다 — 이 파일이 검증하는 것은 "연결 전에 권한을 먼저 확인하는가"다.
-vi.mock('y-websocket', () => ({
-  WebsocketProvider: class {
-    destroy() {}
-  },
-}))
+vi.mock('y-websocket', async () => {
+  const { Awareness } = await import('y-protocols/awareness')
+  return {
+    WebsocketProvider: class {
+      readonly awareness: InstanceType<typeof Awareness>
+
+      constructor(_url: string, _room: string, doc: Doc) {
+        this.awareness = new Awareness(doc)
+      }
+
+      destroy() {
+        this.awareness.destroy()
+      }
+    },
+  }
+})
 
 const fetchMock = vi.fn()
 
@@ -49,6 +61,10 @@ describe('PageEditor', () => {
   it('단건 조회 결과의 권한으로 에디터를 연다', async () => {
     // Given: viewer 로 공유받은 페이지
     setToken('jwt-abc', 3600)
+    setAuthenticatedUser({
+      id: '22222222-2222-4222-8222-222222222222',
+      displayName: '읽는 사용자',
+    })
     fetchMock.mockResolvedValue(jsonResponse(200, PAGE_DETAIL))
 
     // When

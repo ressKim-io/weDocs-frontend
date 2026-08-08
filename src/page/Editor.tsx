@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Collaboration from '@tiptap/extension-collaboration'
+import CollaborationCaret from '@tiptap/extension-collaboration-caret'
 import * as Y from 'yjs'
 import { WebsocketProvider } from 'y-websocket'
-import { getToken } from '../auth/token'
+import { getAuthenticatedUser, getToken } from '../auth/token'
 import { resolveWsUrl } from '../common/ws/connection'
 import type { PageDetailResponse } from './api'
+import { awarenessUserFor, safePresenceColor, safePresenceName } from './presence'
 
 const CONFIGURED_WS_URL = import.meta.env.VITE_WS_URL ?? 'ws://localhost:8080/ws/doc'
 
@@ -18,6 +20,25 @@ const AUTH_SUBPROTOCOL = 'wedocs.sync.v1'
 
 interface EditorProps {
   readonly page: PageDetailResponse
+}
+
+interface CollaborationSession {
+  readonly doc: Y.Doc
+  readonly provider: WebsocketProvider
+}
+
+function renderRemoteCaret(remoteUser: Record<string, unknown>): HTMLElement {
+  const color = safePresenceColor(remoteUser.color)
+  const caret = document.createElement('span')
+  caret.classList.add('collaboration-carets__caret')
+  caret.style.borderColor = color
+
+  const label = document.createElement('span')
+  label.classList.add('collaboration-carets__label')
+  label.style.backgroundColor = color
+  label.textContent = safePresenceName(remoteUser.name)
+  caret.append(label)
+  return caret
 }
 
 /// Tiptap + Yjs 협업 에디터. room = **페이지 UUID**, 편집 가능 여부는 서버가 준 `canEdit` 이 정한다.
@@ -38,31 +59,36 @@ export default function Editor({ page }: EditorProps) {
   // 게이트웨이는 401 로 거절하지만 브라우저는 그 상태 코드를 볼 수 없어(WS 실패는 code 1006 뿐)
   // y-websocket 이 상한 2500ms backoff 로 무한 재접속한다. **연결 전에 막는 것이 유일한 대책이다.**
   const token = useMemo(() => getToken(), [])
+  const authenticatedUser = useMemo(() => getAuthenticatedUser(), [])
+  const awarenessUser = useMemo(
+    () => (authenticatedUser === null ? null : awarenessUserFor(authenticatedUser)),
+    [authenticatedUser],
+  )
   // 보안 페이지(https)에선 wss:// 강제 — 평문 WS의 mixed-content 차단 방어.
   const wsUrl = useMemo(() => resolveWsUrl(CONFIGURED_WS_URL, window.location.protocol), [])
 
-  // --- Y.Doc + WebsocketProvider lifecycle (effect 기반) ---
-  const [ydoc, setYdoc] = useState<Y.Doc | null>(null)
-  const providerRef = useRef<WebsocketProvider | null>(null)
+  // Y.Doc과 provider는 생명주기가 같고 caret 확장도 둘을 함께 요구하므로 원자적으로 공개한다.
+  const [collaboration, setCollaboration] = useState<CollaborationSession | null>(null)
 
   useEffect(() => {
-    if (token === null) return
+    if (token === null || awarenessUser === null) return
 
     const doc = new Y.Doc()
     const provider = new WebsocketProvider(wsUrl, page.id, doc, {
       protocols: [AUTH_SUBPROTOCOL, token],
     })
 
-    providerRef.current = provider
-    setYdoc(doc)
+    // join 직후 queryAwareness 응답에도 사용자 정보가 실리도록 에디터 생성보다 먼저 설정한다.
+    // CollaborationCaret도 같은 객체를 재설정하지만 계산 출처는 이 awarenessUser 하나뿐이다.
+    provider.awareness.setLocalStateField('user', awarenessUser)
+    setCollaboration({ doc, provider })
 
     return () => {
       provider.destroy()
       doc.destroy()
-      providerRef.current = null
-      setYdoc(null)
+      setCollaboration(null)
     }
-  }, [token, wsUrl, page.id])
+  }, [token, awarenessUser, wsUrl, page.id])
 
   const editor = useEditor(
     {
@@ -70,16 +96,33 @@ export default function Editor({ page }: EditorProps) {
       // 조용히 drop 해(`ws_write_dropped_total{reason=viewer}`) 새로고침 시 유실된다 — UX 가 아니라
       // 정합성 문제다. 판단은 `myRole` 이 아니라 `canEdit`(서버 정책의 단일 출처)으로 한다.
       editable: page.canEdit,
+      // viewer도 문서에 포커스해 selection awareness를 발행할 수 있어야 한다. 입력 가능 여부는
+      // editable=false가 계속 막고, tabindex는 키보드 포커스와 원격 커서 표시만 연다.
+      editorProps: { attributes: { tabindex: '0' } },
       extensions: [
         // Collaboration 이 자체 undo/redo 를 제공 → StarterKit 의 undoRedo 비활성(중복 방지).
         StarterKit.configure({ undoRedo: false }),
-        ...(ydoc ? [Collaboration.configure({ document: ydoc })] : []),
+        ...(collaboration && awarenessUser
+          ? [
+            Collaboration.configure({ document: collaboration.doc }),
+            CollaborationCaret.configure({
+              provider: collaboration.provider,
+              user: awarenessUser,
+              render: renderRemoteCaret,
+              selectionRender: (remoteUser) => ({
+                nodeName: 'span',
+                class: 'collaboration-carets__selection',
+                style: `background-color: ${safePresenceColor(remoteUser.color)}33`,
+              }),
+            }),
+          ]
+          : []),
       ],
     },
-    [ydoc],
+    [collaboration, awarenessUser],
   )
 
-  if (token === null) {
+  if (token === null || authenticatedUser === null) {
     return (
       <p className="picker-error" role="alert">
         세션이 만료되었습니다. 로그아웃 후 다시 로그인해 주세요.
@@ -87,7 +130,7 @@ export default function Editor({ page }: EditorProps) {
     )
   }
 
-  if (!ydoc) {
+  if (!collaboration) {
     return <p className="picker-hint">연결 중…</p>
   }
 
