@@ -9,7 +9,16 @@ export interface AuthenticatedUser {
   readonly displayName: string
 }
 
+/// 비동기 인증 bootstrap의 소유권 핸들. 객체 identity로 비교하므로 이전 시도가 새 세션을
+/// commit/rollback할 수 없다. generation은 디버깅용이며 권한 판단에는 쓰지 않는다.
+export interface AuthenticationAttempt {
+  readonly generation: number
+}
+
+export type AuthenticationCommit = 'committed' | 'stale' | 'expired'
+
 interface Session {
+  readonly owner: AuthenticationAttempt
   readonly accessToken: string
   readonly expiresAtMs: number
   readonly user: AuthenticatedUser | null
@@ -19,21 +28,67 @@ interface Session {
 /// 창(clock skew + 왕복 지연)을 없앤다.
 export const EXPIRY_SKEW_MS = 30_000
 
+let nextGeneration = 0
+let activeAttempt: AuthenticationAttempt | null = null
 let session: Session | null = null
 
-export function setToken(accessToken: string, expiresInSeconds: number, nowMs = Date.now()): void {
-  session = { accessToken, expiresAtMs: nowMs + expiresInSeconds * 1000, user: null }
+/// 최신으로 **시작한** 인증 시도만 세션을 완성할 수 있다. 첫 네트워크 await 전에 호출해야 한다.
+export function beginAuthenticationAttempt(): AuthenticationAttempt {
+  const attempt = { generation: ++nextGeneration }
+  activeAttempt = attempt
+  session = null
+  return attempt
 }
 
-export function setAuthenticatedUser(user: AuthenticatedUser): void {
-  if (session === null) {
-    throw new Error('cannot attach a user without an access token')
+export function isAuthenticationAttemptCurrent(attempt: AuthenticationAttempt): boolean {
+  return activeAttempt === attempt
+}
+
+/// 로그인 응답도 시작 시점의 소유권이 남아 있을 때만 임시 저장한다.
+export function setToken(
+  owner: AuthenticationAttempt,
+  accessToken: string,
+  expiresInSeconds: number,
+  nowMs = Date.now(),
+): boolean {
+  if (!isAuthenticationAttemptCurrent(owner)) {
+    return false
+  }
+  session = {
+    owner,
+    accessToken,
+    expiresAtMs: nowMs + expiresInSeconds * 1000,
+    user: null,
+  }
+  return true
+}
+
+/// 프로필 응답은 같은 시도가 저장한 아직 유효한 토큰에만 원자적으로 붙인다.
+export function setAuthenticatedUser(
+  owner: AuthenticationAttempt,
+  user: AuthenticatedUser,
+  nowMs = Date.now(),
+): AuthenticationCommit {
+  if (!isAuthenticationAttemptCurrent(owner)) {
+    return 'stale'
+  }
+  if (session === null || session.owner !== owner || isExpiredAt(session, nowMs)) {
+    session = null
+    return 'expired'
   }
   session = { ...session, user: { id: user.id, displayName: user.displayName } }
+  return 'committed'
 }
 
-export function clearToken(): void {
+/// owner가 있으면 해당 시도가 여전히 최신일 때만 rollback한다. owner 없는 호출은 로그아웃/테스트
+/// 정리이며 진행 중인 모든 시도를 무효화한다.
+export function clearToken(owner?: AuthenticationAttempt): boolean {
+  if (owner !== undefined && !isAuthenticationAttemptCurrent(owner)) {
+    return false
+  }
+  activeAttempt = null
   session = null
+  return true
 }
 
 /// **사용 가능한** 토큰만 반환한다 — 만료된 토큰은 없는 것과 같이 취급한다.

@@ -7,7 +7,12 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import type { Doc } from 'yjs'
 import Editor from '../../src/page/Editor'
 import type { PageDetailResponse } from '../../src/page/api'
-import { clearToken, setAuthenticatedUser, setToken } from '../../src/auth/token'
+import {
+  beginAuthenticationAttempt,
+  clearToken,
+  setAuthenticatedUser,
+  setToken,
+} from '../../src/auth/token'
 
 /// provider 생성 인자를 기록만 하는 대역. 실제 WS 를 열지 않으므로 게이트웨이 없이도 **배선**을 검증한다.
 /// `vi.hoisted` 인 이유: `vi.mock` 은 import 위로 끌어올려져 일반 const 를 참조하면 TDZ 로 죽는다.
@@ -34,8 +39,9 @@ vi.mock('y-websocket', async () => {
 const PAGE_ID = '33333333-3333-4333-8333-333333333333'
 
 function authenticate(): void {
-  setToken('jwt-abc', 3600)
-  setAuthenticatedUser({
+  const owner = beginAuthenticationAttempt()
+  setToken(owner, 'jwt-abc', 3600)
+  setAuthenticatedUser(owner, {
     id: '22222222-2222-4222-8222-222222222222',
     displayName: '협업 사용자',
   })
@@ -93,7 +99,7 @@ describe('Editor — 토큰 전달', () => {
 
   it('만료된 토큰도 없는 것과 같이 취급한다', () => {
     // Given: 이미 만료된 토큰(스큐 마진 안쪽도 만료로 본다)
-    setToken('jwt-old', 0)
+    setToken(beginAuthenticationAttempt(), 'jwt-old', 0)
 
     // When
     render(<Editor page={pageWith()} />)

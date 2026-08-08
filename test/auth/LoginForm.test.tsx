@@ -6,7 +6,7 @@ import '@testing-library/jest-dom/vitest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import LoginForm from '../../src/auth/LoginForm'
-import { clearToken, getToken } from '../../src/auth/token'
+import { clearToken, getAuthenticatedUser, getToken } from '../../src/auth/token'
 
 const fetchMock = vi.fn()
 
@@ -27,6 +27,19 @@ function jsonResponse(status: number, body: unknown): Response {
     status,
     headers: { 'content-type': 'application/json' },
   })
+}
+
+interface Deferred<T> {
+  readonly promise: Promise<T>
+  readonly resolve: (value: T) => void
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((accept) => {
+    resolve = accept
+  })
+  return { promise, resolve }
 }
 
 const TOKEN_BODY = { accessToken: 'jwt-new', tokenType: 'Bearer', expiresInSeconds: 3600 }
@@ -75,6 +88,42 @@ describe('LoginForm', () => {
     // Then
     await vi.waitFor(() => expect(onAuthenticated).toHaveBeenCalledTimes(1))
     expect(getToken()).toBe('jwt-new')
+  })
+
+  it('겹친 제출에서 오래된 프로필 응답이 최신 callback과 세션을 덮지 않는다', async () => {
+    // Given: A 프로필만 지연되고 B 로그인은 완전히 성공한다
+    const profileA = deferred<Response>()
+    const tokenB = { ...TOKEN_BODY, accessToken: 'jwt-b' }
+    const userB = {
+      ...USER_BODY,
+      id: '22222222-2222-4222-8222-222222222222',
+      email: 'b@example.com',
+      displayName: '사용자 B',
+    }
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(200, { ...TOKEN_BODY, accessToken: 'jwt-a' }))
+      .mockReturnValueOnce(profileA.promise)
+      .mockResolvedValueOnce(jsonResponse(200, tokenB))
+      .mockResolvedValueOnce(jsonResponse(200, userB))
+    const onAuthenticated = vi.fn()
+    const { container } = render(<LoginForm onAuthenticated={onAuthenticated} />)
+
+    // When: disabled 버튼을 우회하는 programmatic submit 두 개가 겹친다
+    fill('이메일', 'a@example.com')
+    fill('비밀번호', 'password123')
+    submitForm(container)
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    fill('이메일', 'b@example.com')
+    submitForm(container)
+    await vi.waitFor(() => expect(onAuthenticated).toHaveBeenCalledTimes(1))
+    profileA.resolve(jsonResponse(200, USER_BODY))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // Then: A의 stale 성공은 callback·error·최신 B 세션에 영향을 주지 않는다
+    expect(onAuthenticated).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(getToken()).toBe('jwt-b')
+    expect(getAuthenticatedUser()).toEqual({ id: userB.id, displayName: userB.displayName })
   })
 
   it('401 invalid-credentials 면 실패를 표시하고 토큰을 저장하지 않는다', async () => {
