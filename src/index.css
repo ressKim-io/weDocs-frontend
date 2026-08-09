@@ -207,3 +207,28 @@ body {
 .editor .collaboration-carets__selection {
   border-radius: 2px;
 }
+
+/* 읽기 전용(viewer)에서는 브라우저가 caret 을 그리지 않는다 — 자기 커서를 직접 그린다.
+   원격 caret 과 같은 모양을 쓰되 라벨은 없다(내 이름을 나에게 보여줄 이유가 없다). */
+.editor .local-caret {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 2px solid;
+  pointer-events: none;
+  word-break: normal;
+  animation: local-caret-blink 1.06s step-end infinite;
+}
+
+@keyframes local-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* 깜빡임은 정보가 아니라 관례다 — 모션 민감 사용자에겐 고정 표시로 충분하다. */
+@media (prefers-reduced-motion: reduce) {
+  .editor .local-caret {
+    animation: none;
+  }
+}

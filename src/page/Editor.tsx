@@ -8,6 +8,7 @@ import { WebsocketProvider } from 'y-websocket'
 import { getAuthenticatedUser, getToken } from '../auth/token'
 import { resolveWsUrl } from '../common/ws/connection'
 import type { PageDetailResponse } from './api'
+import { LocalCaret } from './localCaret'
 import { awarenessUserFor, safePresenceColor, safePresenceName } from './presence'
 
 const CONFIGURED_WS_URL = import.meta.env.VITE_WS_URL ?? 'ws://localhost:8080/ws/doc'
@@ -83,7 +84,24 @@ export default function Editor({ page }: EditorProps) {
     provider.awareness.setLocalStateField('user', awarenessUser)
     setCollaboration({ doc, provider })
 
+    // 새로고침·탭 닫기 때 내 presence를 **직접** 회수한다.
+    //
+    // 왜 필요한가: y-websocket 3.0.0에는 페이지 이탈 핸들러가 없다(실측 2026-08-08: `unload`·`pagehide`
+    // 참조 0건). 언마운트 경로는 아래 cleanup의 `provider.destroy()`가 제거 프레임을 보내지만,
+    // 새로고침은 cleanup이 돌지 않아 **아무도 보내지 않는다.** 게이트웨이도 대신 못 한다 — awareness를
+    // 해석하지 않는 불투명 릴레이라 떠난 clientID를 모른다. 그 결과 상대 화면에 내 유령 커서가
+    // `outdatedTimeout` 30초 + 체크 주기 3초 = **약 33초** 남고, 그 창 안에 재접속하면 게이트웨이의
+    // join 시 queryAwareness가 peer에게서 그 유령을 **되살려** 내 화면에 내 과거 커서를 띄운다
+    // (실측 재현 2026-08-08). 즉 즉시성을 위한 기능이 유령을 증폭시킨다.
+    //
+    // `unload`가 아니라 `pagehide`인 이유: `unload`는 폐기 예정이고 back/forward cache 진입을 막으며
+    // 모바일에서 발화하지 않는 경로가 있다. `pagehide`는 bfcache 진입까지 포함해 이탈 전에 발화한다.
+    // bfcache로 복귀하면 소켓이 이미 닫혀 재연결되고 그때 presence가 다시 발행되므로 회수해도 안전하다.
+    const releasePresence = () => provider.awareness.setLocalState(null)
+    window.addEventListener('pagehide', releasePresence)
+
     return () => {
+      window.removeEventListener('pagehide', releasePresence)
       provider.destroy()
       doc.destroy()
       setCollaboration(null)
@@ -102,6 +120,11 @@ export default function Editor({ page }: EditorProps) {
       extensions: [
         // Collaboration 이 자체 undo/redo 를 제공 → StarterKit 의 undoRedo 비활성(중복 방지).
         StarterKit.configure({ undoRedo: false }),
+        // viewer 화면은 contenteditable=false라 브라우저가 caret을 그리지 않는다 — 자기 커서만 보충한다.
+        // editable일 때 넣으면 네이티브 caret과 겹쳐 커서가 두 개로 보인다.
+        ...(page.canEdit || awarenessUser === null
+          ? []
+          : [LocalCaret.configure({ color: awarenessUser.color })]),
         ...(collaboration && awarenessUser
           ? [
             Collaboration.configure({ document: collaboration.doc }),
