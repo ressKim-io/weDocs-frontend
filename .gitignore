@@ -11,3 +11,6 @@ dist-ssr/
 .idea/
 .vscode/
 *.log
+
+# 브라우저 검증 산출물(스크린샷·evidence) — 실행마다 새로 생성되므로 추적하지 않는다
+test-results/

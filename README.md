@@ -58,8 +58,14 @@ editor/viewer 를 두 탭에 나눠 여는 데모 시나리오와 오히려 맞�
 |---|---|---|
 | `npm run test:unit` | 단위·컴포넌트(`test/**`, e2e 제외) — room 파싱·WS URL 승격·토큰 만료·REST 계약 검증·화면 3종 | 없음 (CI가 이걸 돌린다) |
 | `npm run test:e2e` | 인증된 협업 E2E(`test/e2e/`) | **4프로세스 실기동** (아래) |
+| `npm run test:e2e:browser` | 실제 브라우저 2개로 presence 검증(`test/browser/`) — 커서·선택 영역이 **화면에 그려지는지** | **5프로세스**(위 4개 + `npm run dev`) **+ `npx playwright install chromium`** |
 
 E2E는 다른 레포 서비스를 띄워야 해서 CI에서 제외돼 있다(M5 배포 파이프라인과 함께 재판정).
+
+**브라우저 바이너리는 `npm ci` 가 받지 않는다** — `playwright` 패키지에 install 훅이 없다(1.62.1 확인).
+덕분에 CI 가 쓰지 않는 100MB 다운로드를 짊어지지 않는 게 장점이지만, 새 클론에서 `test:e2e:browser` 를
+그냥 돌리면 서비스 미기동이 아니라 "Executable doesn't exist" 로 실패해 **원인을 오인하게 된다.**
+먼저 `npx playwright install chromium` 을 한 번 실행해야 한다.
 
 **테스트 환경 분기** — 전역 기본은 `node`(E2E가 실제 WS 를 열어야 하므로). 컴포넌트 테스트만
 파일 상단 `// @vitest-environment jsdom` docblock 으로 뒤집는다. vitest 4 에서 `environmentMatchGlobs`가
