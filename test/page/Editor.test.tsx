@@ -245,3 +245,29 @@ describe('Editor — 자기 caret 보충 배선', () => {
     expect(document.querySelector('.local-caret')).toBeNull()
   })
 })
+
+describe('Editor — bfcache 복귀 시 presence 재무장', () => {
+  it('pageshow 가 오면 비워둔 awareness 를 다시 채운다', async () => {
+    // Given: 이탈로 presence 를 회수한 상태(bfcache 진입)
+    authenticate()
+    await act(async () => {
+      render(<Editor page={pageWith()} />)
+    })
+    const provider = providerInstances[0]
+    await act(async () => {
+      window.dispatchEvent(new Event('pagehide'))
+    })
+    expect(provider.awareness.getLocalState()).toBeNull()
+
+    // When: bfcache 에서 같은 페이지로 복귀한다(언마운트가 아니라 살아 있는 탭이 돌아온다)
+    await act(async () => {
+      window.dispatchEvent(new Event('pageshow'))
+    })
+
+    // Then: 재무장하지 않으면 presence 를 되살릴 경로가 **하나도 없다** —
+    // setLocalStateField · y-protocols 15초 자가 갱신 · y-websocket onopen 재발행이 모두
+    // `getLocalState() !== null` 가드에 막힌다. 그 상태의 탭은 문서를 보고 있는데 아무에게도
+    // 보이지 않고, 자가 갱신이 멈추므로 룸에 혼자 남으면 30초 주기 재접속 flap 까지 생긴다.
+    expect(provider.awareness.getLocalState()).not.toBeNull()
+  })
+})

@@ -89,19 +89,51 @@ export default function Editor({ page }: EditorProps) {
     // 왜 필요한가: y-websocket 3.0.0에는 페이지 이탈 핸들러가 없다(실측 2026-08-08: `unload`·`pagehide`
     // 참조 0건). 언마운트 경로는 아래 cleanup의 `provider.destroy()`가 제거 프레임을 보내지만,
     // 새로고침은 cleanup이 돌지 않아 **아무도 보내지 않는다.** 게이트웨이도 대신 못 한다 — awareness를
-    // 해석하지 않는 불투명 릴레이라 떠난 clientID를 모른다. 그 결과 상대 화면에 내 유령 커서가
-    // `outdatedTimeout` 30초 + 체크 주기 3초 = **약 33초** 남고, 그 창 안에 재접속하면 게이트웨이의
-    // join 시 queryAwareness가 peer에게서 그 유령을 **되살려** 내 화면에 내 과거 커서를 띄운다
-    // (실측 재현 2026-08-08). 즉 즉시성을 위한 기능이 유령을 증폭시킨다.
+    // 해석하지 않는 불투명 릴레이라 떠난 clientID를 모른다. 그 결과 상대 화면에 내 유령 커서가 남고,
+    // 그 창 안에 재접속하면 게이트웨이의 join 시 queryAwareness가 peer에게서 그 유령을 **되살려**
+    // 내 화면에 내 과거 커서를 띄운다(실측 재현 2026-08-08). 즉 즉시성을 위한 기능이 유령을 증폭시킨다.
     //
     // `unload`가 아니라 `pagehide`인 이유: `unload`는 폐기 예정이고 back/forward cache 진입을 막으며
     // 모바일에서 발화하지 않는 경로가 있다. `pagehide`는 bfcache 진입까지 포함해 이탈 전에 발화한다.
-    // bfcache로 복귀하면 소켓이 이미 닫혀 재연결되고 그때 presence가 다시 발행되므로 회수해도 안전하다.
+    // ⚠️ 회수는 **보장이 아니라 최선노력**이다. 세 종류의 경로가 남는다:
+    // ① 이벤트가 발화하지 않는 경로 — 탭이 hidden 이 된 뒤의 브라우저·OS discard, 앱 스위처 강제 종료,
+    //    렌더러 크래시. Page Lifecycle 이 보장하는 마지막 지점은 `visibilitychange`(hidden)이고
+    //    `pagehide`는 그보다 뒤다. 그런데 회수를 `visibilitychange`로 옮기면 **단순 탭 전환에서도**
+    //    내 커서가 상대 화면에서 사라진다 — presence 의 의미가 "문서를 보고 있다"인데 탭을 옮길 때마다
+    //    깜빡이면 신호가 망가진다. 그래서 teardown·bfcache 진입에만 발화하는 `pagehide`를 유지한다.
+    // ② 발화했지만 소켓이 닫혀 프레임이 버려지는 경로 — y-websocket 의 `broadcastMessage`는
+    //    `wsconnected && OPEN` 이 아니면 큐·재시도 없이 버린다(재접속 백오프 창·네트워크 단절).
+    // ③ 남는 경로는 peer 의 `outdatedTimeout` 폴백이 청소한다. 그 폴백은 **세션당** 30초 + 체크 3초이고
+    //    전역 상한이 아니다 — 유령을 쥔 peer 가 join 재질의에 응답하면 새 세션에서 `lastUpdated`가
+    //    수신 시각으로 다시 찍혀 33초가 재시작된다(join 이 이어지는 동안 사슬이 연장된다).
+    //    즉 회수 성공의 값은 "33초짜리 불편을 없앤다"가 아니라 **그 사슬의 시작점을 없앤다**는 것이다.
     const releasePresence = () => provider.awareness.setLocalState(null)
+
+    // bfcache 복귀 시 presence 를 **다시 무장한다.**
+    //
+    // 왜 필요한가: `setLocalState(null)` 이후 `getLocalState()` 는 영구히 null 이고, presence 를 다시
+    // 발행하는 모든 경로가 그 null 뒤에 잠긴다 — `setLocalStateField`·y-protocols 의 15초 자가 갱신·
+    // y-websocket 의 `onopen` 재발행이 전부 `getLocalState() !== null` 가드를 통과하지 못한다.
+    // 재무장이 없으면 bfcache 로 돌아온 탭은 **문서를 보고 있는데 아무에게도 보이지 않는다.**
+    //
+    // 그리고 그 15초 자가 갱신은 keep-alive 가 아니다 — y-websocket 의 `messageReconnectTimeout`(30초)
+    // 무응답 감지를 면하게 해주는 유일한 자체 트래픽이라, 룸에 혼자 남으면 30초 주기로 스스로 끊고
+    // 재접속하는 flap 이 된다. 재무장이 presence 소실과 그 flap 을 함께 닫는다.
+    //
+    // `setLocalStateField` 가 아니라 `setLocalState` 인 이유가 위 null 가드다. cursor 필드는 다음
+    // selection 변경에서 y-tiptap 이 다시 싣는다 — 그때까지는 이름·색만 있는 부분 presence 다.
+    const restorePresence = () => {
+      if (provider.awareness.getLocalState() === null) {
+        provider.awareness.setLocalState({ user: awarenessUser })
+      }
+    }
+
     window.addEventListener('pagehide', releasePresence)
+    window.addEventListener('pageshow', restorePresence)
 
     return () => {
       window.removeEventListener('pagehide', releasePresence)
+      window.removeEventListener('pageshow', restorePresence)
       provider.destroy()
       doc.destroy()
       setCollaboration(null)
