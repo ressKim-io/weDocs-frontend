@@ -6,12 +6,14 @@ import { createPage, createWorkspace, provisionAccount, shareAsViewer, type Acco
 import {
   documentText,
   gatewayCounter,
+  gatewayCounterOrZero,
   isEditable,
   launchBrowser,
   localCaretCount,
   remoteCaretLabels,
   remoteSelectionCount,
   selectParagraph,
+  signInAgain,
   signInAndOpen,
   tryRangeSelect,
   waitUntil,
@@ -102,7 +104,7 @@ describe('M3 Phase 2 — 두 브라우저 presence', () => {
         PRESENCE_TIMEOUT_MS,
         'editor 입력 반영',
       )
-      const querySentBefore = await gatewayCounter('ws_awareness_query_sent_total')
+      const querySentBefore = await gatewayCounterOrZero('ws_awareness_query_sent_total')
 
       // When: viewer가 새로 접속한다
       viewerSession = await signInAndOpen(browser, fixture.pageId, fixture.viewer)
@@ -131,7 +133,7 @@ describe('M3 Phase 2 — 두 브라우저 presence', () => {
     'editor의 선택 영역이 viewer에게 보인다',
     async () => {
       // Given/When: editor가 문단 전체를 범위 선택
-      const relayedBefore = await gatewayCounter('ws_awareness_relayed_total')
+      const relayedBefore = await gatewayCounterOrZero('ws_awareness_relayed_total')
       await selectParagraph(editorPage)
 
       // Then: viewer에 원격 selection 하이라이트 + 이름 라벨
@@ -151,7 +153,7 @@ describe('M3 Phase 2 — 두 브라우저 presence', () => {
   )
 
   it(
-    'viewer의 커서가 editor에게 보인다 — viewer도 presence는 발행한다',
+    'viewer의 커서와 선택 영역이 editor에게 보인다 — viewer도 presence는 발행한다',
     async () => {
       // Given/When: viewer가 편집 영역 안을 클릭해 커서를 옮긴다(쓰기는 잠겨 있지만 포커스·presence는 허용)
       const box = await viewer().locator('.editor .tiptap').boundingBox()
@@ -166,18 +168,19 @@ describe('M3 Phase 2 — 두 브라우저 presence', () => {
       )
       await screenshot(editorPage, '3-editor-sees-viewer-caret')
 
-      // 읽기 전용 화면은 **범위 선택 자체가 불가능**하다 — 따라서 viewer→editor 방향의 "selection 표시"는
-      // 현재 설계에서 달성 불가다. caret 전달과는 별개의 제약이다.
+      // And: viewer 도 **범위 선택**을 만들 수 있고 그것이 editor 에 보인다.
       //
-      // 확인된 사실(2026-08-08): dblclick·트리플클릭·드래그 모두 범위를 만들지 못하고, `LocalCaret`을
-      // 비활성화해도 동일하므로 우리 확장이 만든 회귀가 아니라 ProseMirror `editable: false`의 동작이다.
-      // 부작용으로 **viewer는 문서 텍스트를 복사할 수 없다** — 읽기 전용 문서로서는 별도의 사용성 결함이라
-      // 보류 항목으로 등록했다(controller `status/current.md` 이월 findings).
-      //
-      // 이 단정을 남기는 이유: 나중에 그 제약이 풀리면 이 테스트가 **실패해서** 알려준다.
-      // 조용히 지나가면 "언젠가 되던데?" 상태로 방치된다.
-      expect(await tryRangeSelect(viewer())).toBe(false)
-      expect(await remoteSelectionCount(editorPage)).toBe(0)
+      // ⚠️ 2026-08-08 에는 이 방향이 "달성 불가"라고 기록했었는데 **오측정이었다.** 당시 헬퍼가
+      // `page.click(selector)` 로 요소 **박스 중심**을 찍었고, `.editor .tiptap` 은 `min-height: 240px`
+      // 이라 한 줄 문서에서 중심은 텍스트가 없는 빈 공간이다. 즉 측정한 것은 제약이 아니라 클릭 좌표였다.
+      // 첫 줄(`y + 28`)을 찍으면 읽기 전용 화면에서도 트리플클릭 범위 선택이 정상 동작한다.
+      expect(await tryRangeSelect(viewer())).toBe(true)
+      await waitUntil(
+        async () => (await remoteSelectionCount(editorPage)) > 0,
+        PRESENCE_TIMEOUT_MS,
+        'viewer selection 이 editor 에 표시',
+      )
+      await screenshot(editorPage, '3b-editor-sees-viewer-selection')
     },
     PRESENCE_TIMEOUT_MS * 2,
   )
@@ -188,10 +191,23 @@ describe('M3 Phase 2 — 두 브라우저 presence', () => {
       // Given: 읽기 전용 화면
       expect(await isEditable(viewer())).toBe(false)
 
-      // When: 문서 안을 클릭해 커서를 collapsed 상태로 놓는다
+      // When: 문서 안을 클릭해 커서를 collapsed 상태로 놓는다.
+      // 직전 케이스가 범위 선택을 남겼으므로 **텍스트 끝 너머**를 찍어 확실히 collapse 시킨다 —
+      // 선택 영역 안을 다시 클릭하면 범위가 유지될 수 있고, 그러면 collapsed caret 이 아니라
+      // selection 상태라 보충 caret 이 렌더되지 않는다(플러그인이 `selection.empty` 만 그린다).
       const box = await viewer().locator('.editor .tiptap').boundingBox()
       if (box === null) throw new Error('에디터 영역을 찾지 못했다')
+      await viewer().evaluate(() => document.getSelection()?.removeAllRanges())
       await viewer().mouse.click(box.x + 40, box.y + 28)
+      await waitUntil(
+        async () =>
+          viewer().evaluate(() => {
+            const selection = document.getSelection()
+            return selection !== null && selection.rangeCount > 0 && selection.isCollapsed
+          }),
+        PRESENCE_TIMEOUT_MS,
+        'viewer selection 이 collapsed 상태로 전환',
+      )
 
       // Then: 브라우저가 그려주지 않는 자기 caret을 앱이 보충한다
       await waitUntil(
@@ -252,6 +268,11 @@ describe('M3 Phase 2 — 두 브라우저 presence', () => {
       )
 
       // When: viewer가 페이지를 새로고침한다(토큰은 메모리 전용이라 로그인 화면으로 돌아간다)
+      //
+      // 시계를 **reload 직전에** 잡는다. `waitForSelector` 뒤에서 재면 그 사이에 회수가 이미 끝나 있어
+      // 첫 프로브에서 즉시 참이 되고, 기록되는 숫자가 회수 지연이 아니라 **폴링 간격**이 된다.
+      const releasedAt = Date.now()
+      const relayedBeforeRelease = await gatewayCounter('ws_awareness_relayed_total')
       await viewer().reload()
       await viewer().waitForSelector('#auth-email', { timeout: CONNECT_TIMEOUT_MS })
 
@@ -260,12 +281,30 @@ describe('M3 Phase 2 — 두 브라우저 presence', () => {
       // 그 창 안에 재접속하면 게이트웨이 queryAwareness가 peer에게서 유령을 되살려
       // **자기 과거 커서가 자기 화면에 뜬다.** 즉시성 기능이 유령을 증폭시키는 경로다.
       // 예산을 짧게 잡는 것이 곧 "폴백이 아니라 명시 회수"의 강제다 — 초과하면 여기서 실패한다.
-      evidence.ghostClearedInMs = await waitUntil(
+      await waitUntil(
         async () => !(await remoteCaretLabels(editorPage)).includes(PASSWORD_DISPLAY_NAMES.viewer),
         GHOST_RELEASE_BUDGET_MS,
         '새로고침한 viewer의 유령 커서 회수(명시 회수 경로)',
       )
+      // 이탈 시점 기준 경과. 이 값이 33초 폴백 근처면 명시 회수가 죽고 timeout 이 청소한 것이다.
+      evidence.ghostClearedSinceReloadMs = Date.now() - releasedAt
+      // 회수 프레임이 **서버를 통과했다**는 독립 증거 — UI 부재만으로는 릴레이 실패와 구분되지 않는다.
+      evidence.releaseRelayedDelta =
+        (await gatewayCounter('ws_awareness_relayed_total')) - relayedBeforeRelease
+      expect(evidence.releaseRelayedDelta).toBeGreaterThan(0)
       await screenshot(editorPage, '6-editor-after-viewer-reload-no-ghost')
+
+      // And: **이 수정의 동기였던 되살림 경로**를 곧바로 이어서 확인한다.
+      // 유령이 남아 있으면 재접속 시 게이트웨이의 join queryAwareness 가 기존 peer 에게 되묻고, peer 는
+      // 자기가 아는 **모든** 상태로 응답하므로 방금 떠난 내 유령이 되살아나 **자기 과거 커서가 자기
+      // 화면에 뜬다.** 회수 확인만 하고 여기서 멈추면 그 현상은 어느 계층에도 고정되지 않는다.
+      await signInAgain(viewer(), fixture.viewer)
+      await viewer().waitForTimeout(1_500)
+      const labelsAfterRejoin = await remoteCaretLabels(viewer())
+      evidence.labelsAfterViewerRejoin = labelsAfterRejoin
+      // 자기 이름이 **원격** caret 으로 보이면 과거 세션의 유령이다(원격 렌더러는 자기 clientID 를 뺀다).
+      expect(labelsAfterRejoin).not.toContain(PASSWORD_DISPLAY_NAMES.viewer)
+      await screenshot(viewer(), '7-viewer-rejoin-no-self-ghost')
     },
     CONNECT_TIMEOUT_MS * 2,
   )

@@ -92,15 +92,31 @@ export async function selectParagraph(page: Page): Promise<void> {
   }
 }
 
-/// 읽기 전용 화면에서 범위 선택을 **시도**하고 성공했는지 반환한다(단정하지 않는다).
+/// 범위 선택을 **시도**하고 성공했는지 반환한다(단정하지 않는다).
 ///
-/// 현재 `editable: false` 화면은 어떤 조작으로도 범위를 만들지 못한다 — dblclick·트리플클릭·드래그
-/// 전부 실패한다(실측 2026-08-08, `LocalCaret` 비활성 상태에서도 동일하므로 우리 확장과 무관하다).
-/// 이 헬퍼는 그 사실이 **바뀌면 알아차리기 위한** 관측 지점이다.
+/// 좌표를 명시하는 이유: `page.click(selector)` 는 요소 **박스 중심**을 찍는다. `.editor .tiptap` 은
+/// `min-height: 240px` 이고 검증 문서는 한 줄이라 중심은 **텍스트가 없는 빈 공간**이다. 그러면 제약이
+/// 풀려도 제스처가 텍스트에 닿지 않아 계속 `false` 가 나오고, 이 관측은 제약이 아니라 클릭 좌표를
+/// 측정하는 것이 된다. 첫 줄(`y + 28`)을 정확히 찍어야 "선택이 불가능하다"가 실제로 측정된다.
 export async function tryRangeSelect(page: Page): Promise<boolean> {
-  await page.click('.editor .tiptap', { clickCount: 3 })
+  const box = await page.locator('.editor .tiptap').boundingBox()
+  if (box === null) throw new Error('에디터 영역을 찾지 못했다')
+  await page.mouse.click(box.x + 40, box.y + 28, { clickCount: 3 })
   await page.waitForTimeout(200)
   return localSelectionIsRange(page)
+}
+
+/// 이미 로그인 화면으로 돌아온 **같은 페이지**에서 다시 로그인한다(새 컨텍스트를 만들지 않는다).
+/// 새로고침 후 재접속 시나리오는 컨텍스트가 유지돼야 의미가 있다.
+export async function signInAgain(
+  page: Page,
+  credentials: { readonly email: string; readonly password: string },
+): Promise<void> {
+  await page.waitForSelector('#auth-email')
+  await page.fill('#auth-email', credentials.email)
+  await page.fill('#auth-password', credentials.password)
+  await page.click('button[type="submit"]')
+  await page.waitForSelector('.editor .tiptap', { timeout: 20_000 })
 }
 
 export async function waitUntil(
@@ -127,14 +143,32 @@ export async function gatewayCounter(metric: string): Promise<number> {
   const body = await response.text()
   // 메트릭 이름 직후는 라벨(`{`) 또는 공백뿐이다 — 그 경계를 강제해 접두사 오합산을 막는다.
   const linePattern = new RegExp(`^${metric.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\{|\\s)`)
-  return body
-    .split('\n')
-    .filter((line) => !line.startsWith('#') && linePattern.test(line))
-    .reduce((sum, line) => {
-      const value = Number(line.trim().split(/\s+/).at(-1))
-      if (!Number.isFinite(value)) {
-        throw new Error(`gateway metric '${metric}' 파싱 실패 — 원문: ${JSON.stringify(line)}`)
-      }
-      return sum + value
-    }, 0)
+  const lines = body.split('\n').filter((line) => !line.startsWith('#') && linePattern.test(line))
+  // **부재와 0을 구분한다.** Micrometer 카운터는 첫 increment 때 생성되므로, 라인이 0건이면
+  // "아직 발생 안 함"과 "이름이 바뀌어 관측이 죽음"이 둘 다 0으로 축약된다. 그러면
+  // `expect(delta).toBeGreaterThan(0)` 실패가 "서버가 릴레이하지 않았다"인지 "메트릭 이름이 죽었다"인지
+  // 구분되지 않는다 — rename·typo 가 값 파싱 오류보다 흔한 실패 양식이라 이쪽이 더 중요하다.
+  // 기준선 측정처럼 부재가 정상인 경우는 `gatewayCounterOrZero` 를 쓴다.
+  if (lines.length === 0) {
+    throw new Error(
+      `gateway metric '${metric}' 부재 — 이름 변경 또는 미등록이다. ` +
+      `기준선처럼 부재가 정상인 지점이면 gatewayCounterOrZero 를 쓸 것.`,
+    )
+  }
+  return lines.reduce((sum, line) => {
+    const value = Number(line.trim().split(/\s+/).at(-1))
+    if (!Number.isFinite(value)) {
+      throw new Error(`gateway metric '${metric}' 파싱 실패 — 원문: ${JSON.stringify(line)}`)
+    }
+    return sum + value
+  }, 0)
+}
+
+/// 아직 발화하지 않아 **부재가 정상인** 지점(기준선 측정)에서 쓴다.
+export async function gatewayCounterOrZero(metric: string): Promise<number> {
+  try {
+    return await gatewayCounter(metric)
+  } catch {
+    return 0
+  }
 }
