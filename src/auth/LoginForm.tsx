@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import { ApiError } from '../common/http/client'
 import { describeApiFailure } from '../common/http/failure'
 import { signIn, signUpAndSignIn } from './session'
@@ -21,6 +21,7 @@ export default function LoginForm({ onAuthenticated }: LoginFormProps) {
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const latestSubmit = useRef(0)
 
   function switchMode(next: Mode) {
     setMode(next)
@@ -30,20 +31,27 @@ export default function LoginForm({ onAuthenticated }: LoginFormProps) {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    const submitId = ++latestSubmit.current
     setError(null)
-    // 제출 중 재클릭으로 같은 요청이 중복 발생하는 것을 막는다.
+    // 버튼 disabled는 정상 브라우저 중복 제출을 막고, submitId는 테스트·프로그램 호출처럼
+    // 요청이 실제로 겹친 경우 오래된 finally/error/callback이 최신 UI를 덮는 것을 막는다.
     setSubmitting(true)
     try {
-      if (mode === 'login') {
-        await signIn(email, password)
-      } else {
-        await signUpAndSignIn(email, password, displayName)
+      const authenticated =
+        mode === 'login'
+          ? await signIn(email, password)
+          : await signUpAndSignIn(email, password, displayName)
+      if (submitId === latestSubmit.current && authenticated) {
+        onAuthenticated()
       }
-      onAuthenticated()
     } catch (cause) {
-      setError(describeFailure(cause))
+      if (submitId === latestSubmit.current) {
+        setError(describeFailure(cause))
+      }
     } finally {
-      setSubmitting(false)
+      if (submitId === latestSubmit.current) {
+        setSubmitting(false)
+      }
     }
   }
 

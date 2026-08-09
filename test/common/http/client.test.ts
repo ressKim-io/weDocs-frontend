@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, NETWORK_ERROR_STATUS, apiRequest } from '../../../src/common/http/client'
-import { clearToken, setToken } from '../../../src/auth/token'
+import { beginAuthenticationAttempt, clearToken, setToken } from '../../../src/auth/token'
 
 const fetchMock = vi.fn()
 
@@ -38,7 +38,7 @@ describe('apiRequest — 인증 헤더', () => {
   it('토큰이 있으면 Bearer 로 싣는다', async () => {
     // Given: 유효 토큰
     fetchMock.mockResolvedValue(jsonResponse(200, { id: 'p1' }))
-    setToken('jwt-abc', 3600)
+    setToken(beginAuthenticationAttempt(), 'jwt-abc', 3600)
 
     // When
     await apiRequest('/api/pages/p1', { method: 'GET' })
@@ -62,7 +62,7 @@ describe('apiRequest — 인증 헤더', () => {
   it('만료된 토큰은 싣지 않는다', async () => {
     // Given: 이미 만료된 토큰 (스토어가 만료를 판정한다)
     fetchMock.mockResolvedValue(jsonResponse(200, {}))
-    setToken('jwt-old', 60, Date.now() - 120_000)
+    setToken(beginAuthenticationAttempt(), 'jwt-old', 60, Date.now() - 120_000)
 
     // When
     await apiRequest('/api/pages', { method: 'GET' })

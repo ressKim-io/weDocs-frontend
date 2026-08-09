@@ -178,3 +178,57 @@ body {
   background: #fff;
   outline: none;
 }
+
+/* 원격 caret 라벨은 선택 영역 위에 떠야 하며 편집·선택 이벤트를 가로채면 안 된다. */
+.editor .collaboration-carets__caret {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 2px solid;
+  pointer-events: none;
+  word-break: normal;
+}
+
+.editor .collaboration-carets__label {
+  position: absolute;
+  left: -2px;
+  top: -1.45rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px 4px 4px 0;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.35;
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.editor .collaboration-carets__selection {
+  border-radius: 2px;
+}
+
+/* 읽기 전용(viewer)에서는 브라우저가 caret 을 그리지 않는다 — 자기 커서를 직접 그린다.
+   원격 caret 과 같은 모양을 쓰되 라벨은 없다(내 이름을 나에게 보여줄 이유가 없다). */
+.editor .local-caret {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 2px solid;
+  pointer-events: none;
+  word-break: normal;
+  animation: local-caret-blink 1.06s step-end infinite;
+}
+
+@keyframes local-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* 깜빡임은 정보가 아니라 관례다 — 모션 민감 사용자에겐 고정 표시로 충분하다. */
+@media (prefers-reduced-motion: reduce) {
+  .editor .local-caret {
+    animation: none;
+  }
+}

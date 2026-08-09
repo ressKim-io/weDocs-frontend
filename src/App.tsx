@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import LoginForm from './auth/LoginForm'
-import { clearToken, getToken } from './auth/token'
+import { clearToken, getAuthenticatedUser } from './auth/token'
 import { parseRoom } from './common/ws/connection'
 import PageEditor from './page/PageEditor'
 import PageList from './page/PageList'
@@ -14,9 +14,8 @@ function pageIdFromUrl(): string | null {
 }
 
 export default function App() {
-  // 토큰은 메모리 전용이라 초기값은 사실상 항상 null 이다(새로고침 = 재로그인, 의도된 동작).
-  // 그럼에도 상수 false 대신 스토어를 읽는 이유: "토큰이 있는가"의 답을 두 곳에 두지 않기 위해서다.
-  const [authenticated, setAuthenticated] = useState(() => getToken() !== null)
+  // 토큰과 현재 사용자 프로필이 모두 준비돼야 완전한 세션이다. 메모리 전용이라 새로고침 시 재로그인한다.
+  const [authenticated, setAuthenticated] = useState(() => getAuthenticatedUser() !== null)
   const [workspace, setWorkspace] = useState<WorkspaceResponse | null>(null)
   const [pageId, setPageId] = useState<string | null>(pageIdFromUrl)
 

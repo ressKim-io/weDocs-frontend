@@ -34,6 +34,28 @@ export async function login(email: string, password: string): Promise<TokenRespo
   return requireUsableToken(body)
 }
 
+/// awareness에 싣는 이름·색상 기준을 인증 주체에서 얻는다. 공개 `/api/auth/**`와 달리
+/// 이 경로는 Bearer 인증이 필수이며, 이메일은 응답 계약 검증에만 쓰고 presence에는 노출하지 않는다.
+export async function fetchCurrentUser(): Promise<UserResponse> {
+  const body = await apiRequest<unknown>('/api/users/me', { method: 'GET' })
+  return requireUser(body)
+}
+
+function requireUser(body: unknown): UserResponse {
+  const candidate = body as Partial<UserResponse> | null | undefined
+  const valid =
+    typeof candidate?.id === 'string' &&
+    candidate.id.length > 0 &&
+    typeof candidate.email === 'string' &&
+    candidate.email.length > 0 &&
+    typeof candidate.displayName === 'string' &&
+    candidate.displayName.length > 0
+  if (!valid) {
+    throw new ApiError(200, MALFORMED_RESPONSE_CODE, 'current user response was malformed')
+  }
+  return candidate as UserResponse
+}
+
 /// 응답도 외부 입력이다(secure-coding P1). 타입 단언만 믿고 저장하면 계약이 바뀐 순간
 /// `setToken(undefined, NaN)` 이 조용히 성립하고, 증상은 한참 뒤 "로그인은 됐는데 매 요청이 401"
 /// 로 나타나 원인 추적이 로그인에서 멀어진다. 경계에서 끊는다.

@@ -2,15 +2,32 @@
 import '@testing-library/jest-dom/vitest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
+import type { Doc } from 'yjs'
 import PageEditor from '../../src/page/PageEditor'
-import { clearToken, setToken } from '../../src/auth/token'
+import {
+  beginAuthenticationAttempt,
+  clearToken,
+  setAuthenticatedUser,
+  setToken,
+} from '../../src/auth/token'
 
 /// 실제 WS 는 열지 않는다 — 이 파일이 검증하는 것은 "연결 전에 권한을 먼저 확인하는가"다.
-vi.mock('y-websocket', () => ({
-  WebsocketProvider: class {
-    destroy() {}
-  },
-}))
+vi.mock('y-websocket', async () => {
+  const { Awareness } = await import('y-protocols/awareness')
+  return {
+    WebsocketProvider: class {
+      readonly awareness: InstanceType<typeof Awareness>
+
+      constructor(_url: string, _room: string, doc: Doc) {
+        this.awareness = new Awareness(doc)
+      }
+
+      destroy() {
+        this.awareness.destroy()
+      }
+    },
+  }
+})
 
 const fetchMock = vi.fn()
 
@@ -48,7 +65,12 @@ const PAGE_DETAIL = {
 describe('PageEditor', () => {
   it('단건 조회 결과의 권한으로 에디터를 연다', async () => {
     // Given: viewer 로 공유받은 페이지
-    setToken('jwt-abc', 3600)
+    const owner = beginAuthenticationAttempt()
+    setToken(owner, 'jwt-abc', 3600)
+    setAuthenticatedUser(owner, {
+      id: '22222222-2222-4222-8222-222222222222',
+      displayName: '읽는 사용자',
+    })
     fetchMock.mockResolvedValue(jsonResponse(200, PAGE_DETAIL))
 
     // When
@@ -62,7 +84,7 @@ describe('PageEditor', () => {
 
   it('읽을 수 없는 페이지는 에디터를 열지 않는다', async () => {
     // Given: 서버는 권한 없는 리소스를 404 로 숨긴다(존재 비노출)
-    setToken('jwt-abc', 3600)
+    setToken(beginAuthenticationAttempt(), 'jwt-abc', 3600)
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ code: 'page-not-found', detail: 'page not found' }), {
         status: 404,
